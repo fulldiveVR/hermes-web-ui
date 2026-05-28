@@ -280,6 +280,34 @@ export function replaceUserProfiles(userId: UserId, profiles: string[], defaultP
   }
 }
 
+/**
+ * Variant B SSO: map a hub tenant to a local web-ui user scoped to exactly that
+ * tenant (as its single profile). This is web-ui session state in the web-ui's
+ * own home — not tenant data — and replaces the admin/123456 password login.
+ * The user holds no usable password; it is only reachable via hub-minted SSO.
+ */
+export function upsertTenantUser(tenantId: string): UserRecord | null {
+  const username = `tenant:${tenantId}`
+  let user = findUserByUsername(username)
+  if (!user) {
+    user = createUser({
+      username,
+      password: randomBytes(24).toString('hex'),
+      role: 'admin',
+      status: 'active',
+      profiles: [tenantId],
+      defaultProfile: tenantId,
+    })
+  } else {
+    if (user.status !== 'active') {
+      updateUser({ userId: user.id, status: 'active' })
+    }
+    replaceUserProfiles(user.id, [tenantId], tenantId)
+    user = findUserById(user.id)
+  }
+  return user
+}
+
 export function createDefaultSuperAdmin(): UserRecord | null {
   const db = getDb()
   if (!db) return null

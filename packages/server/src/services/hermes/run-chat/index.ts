@@ -15,7 +15,7 @@ import { getSession } from '../../../db/hermes/session-store'
 import { getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '../hermes-profile'
 import { AgentBridgeClient } from '../agent-bridge'
 import { handleApiRun, resolveRunSource, loadSessionStateFromDb } from './handle-api-run'
-import { handleBridgeRun } from './handle-bridge-run'
+import { handleHubRun } from './handle-hub-run'
 import { handleAbort } from './abort'
 import { getOrCreateSession } from './compression'
 import { handleSessionCommand, isSessionCommand, parseSessionCommand } from './session-command'
@@ -23,6 +23,7 @@ import { contentBlocksToString } from './content-blocks'
 import type { ContentBlock, QueuedRun, SessionState } from './types'
 import { authenticateUserToken, isAuthEnabled, type AuthenticatedUser } from '../../../middleware/user-auth'
 import { userCanAccessProfile } from '../../../db/hermes/users-store'
+import { hubClient } from '../../hub/hub-client'
 
 export type { ContentBlock } from './types'
 
@@ -69,10 +70,9 @@ export class ChatRunSocket {
     const socketUser = socket.data.user as AuthenticatedUser | undefined
     const socketProfile = (socket.handshake.query?.profile as string) || 'default'
     const currentProfile = () => socketProfile || getActiveProfileName() || 'default'
-    const profileExists = (profile: string) => {
-      if (!profile || profile === 'default') return true
-      return listProfileNamesFromDisk().includes(profile)
-    }
+    // Variant B: "profiles" are hub tenants; access is gated by the user ACL
+    // (canAccessProfile), not by a local filesystem listing.
+    const profileExists = (_profile: string) => true
     const resolveRunProfile = (sessionId?: string, requested?: string) => {
       const requestedProfile = typeof requested === 'string' ? requested.trim() : ''
       if (requestedProfile) {
@@ -294,23 +294,12 @@ export class ChatRunSocket {
     if (data.session_id && source === 'cli' && isSessionCommand(data.input)) return
 
     if (source === 'cli') {
-      let fullInstructions = data.instructions
-        ? `${getSystemPrompt()}\n${data.instructions}`
-        : getSystemPrompt()
-      if (data.session_id) {
-        const sessionRow = getSession(data.session_id)
-        if (sessionRow?.workspace) {
-          const workspaceCtx = `[Current working directory: ${sessionRow.workspace}]`
-          fullInstructions = `\n${workspaceCtx}\n${fullInstructions}`
-        }
-      }
-
-      await handleBridgeRun(
-        this.nsp, socket, { ...data, instructions: fullInstructions }, profile,
-        this.sessionMap, this.bridge,
+      // Variant B: browser chat goes to the hub run API + SSE (which also
+      // wakes a hibernated tenant agent), not the local agent bridge.
+      await handleHubRun(
+        this.nsp, socket, data, profile,
+        this.sessionMap,
         skipUserMessage,
-        loadSessionStateFromDb,
-        this.dequeueNextQueuedRun.bind(this),
       )
       return
     }
@@ -330,6 +319,23 @@ export class ChatRunSocket {
     if (!state) {
       state = await loadSessionStateFromDb(sid, this.sessionMap)
       this.sessionMap.set(sid, state)
+    }
+    // Variant B: history lives on the hub, not the local cache. If the local
+    // state has no messages (e.g. a pre-existing WhatsApp/hub_chat session the
+    // web-ui has never streamed), hydrate it from the hub session detail.
+    if (!state.messages?.length) {
+      const socketUser = socket.data.user as AuthenticatedUser | undefined
+      const profile = (String(socket.handshake.query?.profile || '').trim() || socketUser?.profiles?.[0] || '').trim()
+      if (profile) {
+        try {
+          const detail = await hubClient.getSession(profile, sid)
+          if (detail?.messages?.length) {
+            state.messages = detail.messages as any
+          }
+        } catch (err) {
+          logger.warn(err, '[chat-run-socket] hub history hydrate failed for session %s', sid)
+        }
+      }
     }
     socket.emit('resumed', {
       session_id: sid,

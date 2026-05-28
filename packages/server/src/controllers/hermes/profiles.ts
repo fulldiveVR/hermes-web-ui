@@ -17,6 +17,7 @@ import { getActiveProfileName } from '../../services/hermes/hermes-profile'
 import { HermesSkillInjector } from '../../services/hermes/skill-injector'
 import type { HermesProfile } from '../../services/hermes/hermes-cli'
 import { listUserProfiles } from '../../db/hermes/users-store'
+import { hubClient } from '../../services/hub/hub-client'
 
 const bridgeCleanupClient = () => new AgentBridgeClient({ connectRetryMs: 0, timeoutMs: 5000 })
 
@@ -311,30 +312,22 @@ async function buildRuntimeStatus(profile: HermesProfile | string, bridgeState?:
 
 export async function list(ctx: any) {
   try {
-    let profiles: HermesProfile[]
-    try {
-      profiles = await hermesCli.listProfiles()
-    } catch (err: any) {
-      const { getActiveProfileName } = await import('../../services/hermes/hermes-profile')
-      const activeProfileName = getActiveProfileName()
-      if (!isForbiddenProfileName(activeProfileName)) throw err
-
-      logger.warn(err, '[listProfiles] active_profile "%s" is invalid/reserved; resetting to default and listing profiles from disk', activeProfileName)
-      writeFileSync(getActiveProfileFile(), 'default\n', 'utf-8')
-      profiles = listProfilesFromDisk('default')
-    }
-
+    // Variant B: "profiles" are the hub's tenants, scoped to the logged-in
+    // user's ACL. No local ~/.hermes/profiles filesystem walking.
+    const tenants = await hubClient.listTenants()
     const activeProfileName = requestedProfileName(ctx)
 
-    profiles = filterVisibleProfiles(profiles)
+    let profiles: HermesProfile[] = tenants.map(tenant => ({
+      name: tenant.id,
+      active: tenant.id === activeProfileName,
+      model: '—',
+      alias: tenant.displayName && tenant.displayName !== tenant.id ? tenant.displayName : '',
+    }))
+
     profiles = filterProfilesForUser(ctx, profiles)
+    profiles.forEach(p => { p.active = (p.name === activeProfileName) })
 
-    // Web UI active profile is request-scoped and comes from X-Hermes-Profile.
-    profiles.forEach(p => {
-      p.active = (p.name === activeProfileName)
-    })
-
-    ctx.body = { profiles: attachProfileAvatars(profiles) }
+    ctx.body = { profiles }
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: err.message }
@@ -467,33 +460,28 @@ export async function deleteAvatar(ctx: any) {
   }
 }
 
-export async function runtimeStatus(ctx: any) {
-  const name = String(ctx.params.name || '').trim() || 'default'
-  if (denyProfile(ctx, name)) return
-  if (isForbiddenProfileName(name)) {
-    ctx.status = 400
-    ctx.body = { error: `Profile name '${name}' is reserved` }
-    return
-  }
-  try {
-    const profiles = await listProfilesForStatus()
-    const profile = profiles.find(item => item.name === name)
-    ctx.body = await buildRuntimeStatus(profile || name)
-  } catch {
-    ctx.body = await buildRuntimeStatus(name)
+// Variant B: agent lifecycle is hub-managed (on-demand wake), so the web-ui has
+// no local bridge/gateway to probe. Report a static "connected" status instead
+// of shelling out to bridge/gateway/CLI (which don't exist here and would hang).
+function hubRuntimeStatus(name: string) {
+  return {
+    profile: name,
+    bridge: { running: true, profile: name, reachable: true, mode: 'hub' },
+    gateway: { profile: name, running: true },
   }
 }
 
+export async function runtimeStatus(ctx: any) {
+  const name = String(ctx.params.name || '').trim() || 'default'
+  if (denyProfile(ctx, name)) return
+  ctx.body = hubRuntimeStatus(name)
+}
+
 export async function runtimeStatuses(ctx: any) {
-  try {
-    const profiles = filterProfilesForUser(ctx, await listProfilesForStatus())
-    const bridge = await readBridgeWorkers()
-    const statuses = await Promise.all(profiles.map(profile => buildRuntimeStatus(profile, bridge)))
-    ctx.body = { profiles: statuses }
-  } catch (err: any) {
-    ctx.status = 500
-    ctx.body = { error: err.message }
-  }
+  const tenants = await hubClient.listTenants().catch(() => [])
+  let profiles = tenants.map(t => ({ name: t.id, active: false, model: '—', alias: '' }))
+  profiles = filterProfilesForUser(ctx, profiles)
+  ctx.body = { profiles: profiles.map(p => hubRuntimeStatus(p.name)) }
 }
 
 async function listProfilesForStatus(): Promise<HermesProfile[]> {

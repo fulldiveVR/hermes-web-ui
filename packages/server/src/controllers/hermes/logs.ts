@@ -50,7 +50,14 @@ function parseLine(line: string): LogEntry {
 }
 
 export async function list(ctx: any) {
-  const files = await hermesCli.listLogFiles()
+  // Variant B: no local Hermes CLI to enumerate agent logs; just surface the
+  // web-ui's own log. (Tenant runtime logs would need a hub endpoint.)
+  let files: Awaited<ReturnType<typeof hermesCli.listLogFiles>> = []
+  try {
+    files = await hermesCli.listLogFiles()
+  } catch {
+    files = []
+  }
   if (existsSync(WEBUI_LOG_FILE)) {
     try {
       const stat = statSync(WEBUI_LOG_FILE)
@@ -116,7 +123,8 @@ export async function read(ctx: any) {
       entries.push(parseLine(line))
     }
     ctx.body = { entries: entries.reverse() }
-  } catch (err: any) {
-    ctx.status = 500; ctx.body = { error: err.message }
+  } catch {
+    // Variant B: agent logs come from the local Hermes CLI, which isn't present.
+    ctx.body = { entries: [] }
   }
 }

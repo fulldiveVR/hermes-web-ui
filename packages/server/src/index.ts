@@ -107,24 +107,14 @@ export async function bootstrap() {
     console.warn('[bootstrap] failed to inject bundled skills:', err instanceof Error ? err.message : err)
   }
 
-  try {
-    await ensureProfileGatewaysRunning()
-    console.log('[bootstrap] profile gateways checked')
-  } catch (err) {
-    logger.warn(err, '[bootstrap] failed to ensure profile gateways')
-    console.warn('[bootstrap] failed to ensure profile gateways:', err instanceof Error ? err.message : err)
-  }
+  // Variant B: the web-ui is a pure hub client. It does NOT start per-profile
+  // gateways and does NOT spawn an agent bridge — all agent work is owned by
+  // the hub (on-demand wake on first run via the hub run API). The gateway
+  // autostart and agent-bridge manager are intentionally not started here.
+  console.log('[bootstrap] hub-client mode: no gateway autostart, no agent bridge')
 
   const app = new Koa()
 
-  try {
-    agentBridgeManager = await startAgentBridgeManager()
-    console.log('[bootstrap] agent bridge started')
-  } catch (err) {
-    logger.warn(err, '[bootstrap] agent bridge failed to start')
-    console.warn('[bootstrap] agent bridge failed to start:', err instanceof Error ? err.message : err)
-  }
-  await new Promise(resolve => setTimeout(resolve, 1000))
   // Initialize all web-ui SQLite tables
   const { initAllStores } = await import('./db/hermes/init')
   // Wait 1 second before initializing stores to ensure all resources are ready

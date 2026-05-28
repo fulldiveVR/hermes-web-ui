@@ -23,6 +23,15 @@ import { logger } from '../../services/logger'
 import type { ConversationSummary } from '../../services/hermes/conversations'
 import { listUserProfiles } from '../../db/hermes/users-store'
 import { readConfigYamlForProfile } from '../../services/config-helpers'
+import { hubClient } from '../../services/hub/hub-client'
+
+// Variant B "one forever session" model: the web-ui surfaces the tenant's real
+// conversation(s), not system-generated sessions. Cron jobs (e.g. the
+// media-sources processor) spawn a new session every run; those are hidden.
+const SYSTEM_SESSION_SOURCES = new Set(['cron', 'tool'])
+function isConversationSession(s: { source?: string }): boolean {
+  return !SYSTEM_SESSION_SOURCES.has(String(s.source || ''))
+}
 
 function getPendingDeletedSessionIds(): Set<string> {
   return getGroupChatServer()?.getStorage().getPendingDeletedSessionIds() || new Set<string>()
@@ -310,18 +319,31 @@ export async function getConversationMessages(ctx: any) {
 }
 
 export async function list(ctx: any) {
+  // Variant B: the chat sidebar session list is sourced from the hub (the
+  // tenant's real state.db), same as listHermesSessions. No local FS.
   const source = (ctx.query.source as string) || undefined
-  const limit = ctx.query.limit ? parseInt(ctx.query.limit as string, 10) : undefined
-  const profile = explicitProfileFilter(ctx)
-  const effectiveLimit = limit && limit > 0 ? limit : 2000
-
-  const allSessions = localListSessions(profile, source, effectiveLimit)
-  const knownProfiles = profile ? null : new Set(listProfileNamesFromDisk())
-  ctx.body = {
-    sessions: filterPendingDeletedSessions(filterByAllowedProfiles(ctx, allSessions).filter(s =>
-      (s.source === 'api_server' || s.source === 'cli') &&
-      (!knownProfiles || knownProfiles.has(s.profile || 'default')),
-    )),
+  const profile = requestedProfile(ctx) || ctx.state?.user?.profiles?.[0]
+  if (!profile) {
+    ctx.body = { sessions: [] }
+    return
+  }
+  if (!canAccessProfile(ctx, profile)) {
+    ctx.status = 403
+    ctx.body = { error: `Profile "${profile}" is not available for this user` }
+    return
+  }
+  try {
+    // Chat sidebar: hide system/cron sessions; show the tenant's real
+    // conversations (most recent first).
+    const sessions = (await hubClient.listSessions(profile, source))
+      .filter(isConversationSession)
+      .map(s => ({ ...s, profile }))
+      .sort((a, b) => Number(b.last_active || b.started_at || 0) - Number(a.last_active || a.started_at || 0))
+    ctx.body = { sessions }
+  } catch (err: any) {
+    logger.warn(err, '[sessions.list] hub session list failed for tenant "%s"', profile)
+    ctx.status = 502
+    ctx.body = { error: 'Failed to load sessions from hub' }
   }
 }
 
@@ -330,18 +352,35 @@ export async function list(ctx: any) {
  * GET /api/hermes/sessions/hermes?source=&limit=
  */
 export async function listHermesSessions(ctx: any) {
+  // Variant B: tenant sessions come from the hub (sourced from the tenant's
+  // real state.db on the hub side), never the local filesystem. The "profile"
+  // is the tenant id; the ACL guarantees the user only sees their own tenant.
   const source = (ctx.query.source as string) || undefined
-  const limit = ctx.query.limit ? parseInt(ctx.query.limit as string, 10) : undefined
-  const profile = requestedProfile(ctx)
-  const effectiveLimit = limit && limit > 0 ? limit : 2000
+  const profile = requestedProfile(ctx) || ctx.state?.user?.profiles?.[0]
+  if (!profile) {
+    ctx.body = { sessions: [] }
+    return
+  }
+  if (!canAccessProfile(ctx, profile)) {
+    ctx.status = 403
+    ctx.body = { error: `Profile "${profile}" is not available for this user` }
+    return
+  }
 
-  const importedIds = new Set(localListSessions(profile, undefined, effectiveLimit).map(session => session.id))
-  const allSessions = (await listSessionSummaries(source, effectiveLimit, profile))
-    .map(session => ({
-      ...(profile ? { ...session, profile } : session),
-      webui_imported: importedIds.has(session.id),
-    }))
-  ctx.body = { sessions: filterPendingDeletedSessions(filterByAllowedProfiles(ctx, allSessions).filter(s => s.source !== 'api_server')) }
+  try {
+    // Variant B: browser chat flows through the hub run API and lands as
+    // source=api_server, alongside whatsapp/telegram/cron/a2a sessions — show
+    // them all (the legacy web-ui excluded api_server, which would now hide the
+    // user's own chats).
+    const sessions = (await hubClient.listSessions(profile, source))
+      .filter(isConversationSession)
+      .map(s => ({ ...s, profile, webui_imported: false }))
+    ctx.body = { sessions }
+  } catch (err: any) {
+    logger.warn(err, '[listHermesSessions] hub session list failed for tenant "%s"', profile)
+    ctx.status = 502
+    ctx.body = { error: 'Failed to load sessions from hub' }
+  }
 }
 
 export async function search(ctx: any) {
@@ -358,14 +397,32 @@ export async function search(ctx: any) {
 }
 
 export async function get(ctx: any) {
-  const session = localGetSessionDetail(ctx.params.id)
-  if (!session) {
-    ctx.status = 404
-    ctx.body = { error: 'Session not found' }
+  // Variant B: session detail (with messages) is sourced from the hub.
+  const profile = requestedProfile(ctx) || ctx.state?.user?.profiles?.[0]
+  if (!profile || !canAccessProfile(ctx, profile)) {
+    ctx.status = profile ? 403 : 404
+    ctx.body = { error: profile ? `Profile "${profile}" is not available for this user` : 'Session not found' }
     return
   }
-  if (denySessionAccess(ctx, session)) return
-  ctx.body = { session }
+  try {
+    const detail = await hubClient.getSession(profile, ctx.params.id)
+    if (!detail?.session) {
+      ctx.status = 404
+      ctx.body = { error: 'Session not found' }
+      return
+    }
+    ctx.body = {
+      session: {
+        ...detail.session,
+        profile,
+        messages: detail.messages,
+        thread_session_count: detail.thread_session_count ?? 1,
+      },
+    }
+  } catch (err: any) {
+    ctx.status = err?.status === 404 ? 404 : 502
+    ctx.body = { error: err?.status === 404 ? 'Session not found' : 'Failed to load session from hub' }
+  }
 }
 
 /**
@@ -373,49 +430,44 @@ export async function get(ctx: any) {
  * GET /api/hermes/sessions/hermes/:id
  */
 export async function getHermesSession(ctx: any) {
-  const profile = requestedProfile(ctx)
-
-  // Prefer the Web UI local session store. Hermes state.db can lag behind or
-  // miss messages for Bridge-backed runs, while the local store is the source
-  // used by chat rendering and compression.
-  const localSession = localGetSessionDetail(ctx.params.id)
-  const localSessionProfile = (localSession?.profile || 'default') as string
-  if (localSession && localSession.source !== 'api_server' && (!profile || localSessionProfile === profile)) {
-    if (denySessionAccess(ctx, localSession)) return
-    ctx.body = { session: localSession }
+  // Variant B: session detail (with messages) comes from the hub.
+  const profile = requestedProfile(ctx) || ctx.state?.user?.profiles?.[0]
+  if (!profile) {
+    ctx.status = 404
+    ctx.body = { error: 'Session not found' }
+    return
+  }
+  if (!canAccessProfile(ctx, profile)) {
+    ctx.status = 403
+    ctx.body = { error: `Profile "${profile}" is not available for this user` }
     return
   }
 
-  // Try Hermes state.db next (consistent with listHermesSessions)
   try {
-    const session = profile
-      ? await getSessionDetailFromDbWithProfile(ctx.params.id, profile)
-      : await getSessionDetailFromDb(ctx.params.id)
-    if (session && session.source !== 'api_server') {
-      const sessionWithProfile = profile ? { ...session, profile } : session
-      if (denySessionAccess(ctx, sessionWithProfile)) return
-      ctx.body = { session: sessionWithProfile }
+    const detail = await hubClient.getSession(profile, ctx.params.id)
+    if (!detail?.session) {
+      ctx.status = 404
+      ctx.body = { error: 'Session not found' }
       return
     }
-  } catch (err) {
-    logger.warn(err, 'Hermes Session DB: detail query failed, falling back to CLI')
+    ctx.body = {
+      session: {
+        ...detail.session,
+        profile,
+        messages: detail.messages,
+        thread_session_count: detail.thread_session_count ?? 1,
+      },
+    }
+  } catch (err: any) {
+    if (err?.status === 404) {
+      ctx.status = 404
+      ctx.body = { error: 'Session not found' }
+      return
+    }
+    logger.warn(err, '[getHermesSession] hub session detail failed for tenant "%s"', profile)
+    ctx.status = 502
+    ctx.body = { error: 'Failed to load session from hub' }
   }
-
-  // Fallback to CLI
-  const session = await hermesCli.getSession(ctx.params.id)
-  if (!session) {
-    ctx.status = 404
-    ctx.body = { error: 'Session not found' }
-    return
-  }
-  // Filter out api_server sessions
-  if (session.source === 'api_server') {
-    ctx.status = 404
-    ctx.body = { error: 'Session not found' }
-    return
-  }
-  if (denySessionAccess(ctx, session)) return
-  ctx.body = { session }
 }
 
 export async function importHermesSession(ctx: any) {
