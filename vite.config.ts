@@ -5,11 +5,13 @@ import { resolve } from 'path'
 import pkg from './package.json'
 
 const BACKEND = process.env.VITE_BACKEND_URL || 'http://127.0.0.1:8648'
+const BACKEND_IS_HTTPS = BACKEND.startsWith('https://')
 
 function createProxyConfig(): ProxyOptions {
   return {
     target: BACKEND,
     changeOrigin: true,
+    secure: !BACKEND_IS_HTTPS,
     configure: (proxy) => {
       proxy.on('proxyReq', (proxyReq) => {
         proxyReq.removeHeader('origin')
@@ -98,6 +100,8 @@ export default defineConfig({
       '/socket.io': {
         target: BACKEND,
         ws: true,
+        changeOrigin: true,
+        secure: !BACKEND_IS_HTTPS,
       },
     },
   },

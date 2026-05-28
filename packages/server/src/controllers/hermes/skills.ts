@@ -10,6 +10,7 @@ import type { SkillSource } from '../../services/config-helpers'
 import { isPathWithin } from '../../services/hermes/hermes-path'
 import { getActiveProfileName, getProfileDir } from '../../services/hermes/hermes-profile'
 import { getSkillUsageStatsFromDb } from '../../db/hermes/sessions-db'
+import { hubClient, HubError } from '../../services/hub/hub-client'
 
 function requestedProfile(ctx: any): string {
   return ctx.state?.profile?.name || getActiveProfileName() || 'default'
@@ -370,6 +371,13 @@ function mergeExternalCategories(categories: any[], externalCategories: any[]): 
 export async function list(ctx: any) {
   const skillsDir = requestSkillsDir(ctx)
   try {
+    try {
+      ctx.body = await hubClient.listSkills(requestedProfile(ctx))
+      return
+    } catch (err) {
+      if (!(err instanceof HubError) || ![404, 501].includes(err.status)) throw err
+    }
+
     const config = await readConfigYamlForProfile(requestedProfile(ctx))
     const disabledList: string[] = config.skills?.disabled || []
 
@@ -461,6 +469,13 @@ export async function listFiles(ctx: any) {
   const { category, skill } = ctx.params
   const profileSkillsDir = requestSkillsDir(ctx)
   try {
+    try {
+      ctx.body = { files: await hubClient.listSkillFiles(requestedProfile(ctx), category, skill) }
+      return
+    } catch (err) {
+      if (!(err instanceof HubError) || ![404, 501].includes(err.status)) throw err
+    }
+
     const config = await readConfigYamlForProfile(requestedProfile(ctx))
     const skillDir = await resolveSkillDirFromConfig(config, profileSkillsDir, category, skill)
     if (!skillDir) {
@@ -484,6 +499,16 @@ export async function readFile_(ctx: any) {
   let realPath = filePath
   if (filePath.startsWith('misc/')) {
     realPath = filePath.slice(5)
+  }
+  try {
+    ctx.body = { content: await hubClient.getSkillFile(requestedProfile(ctx), realPath) }
+    return
+  } catch (err) {
+    if (!(err instanceof HubError) || ![404, 501].includes(err.status)) {
+      ctx.status = 500
+      ctx.body = { error: err instanceof Error ? err.message : String(err) }
+      return
+    }
   }
   const fullPath = resolve(join(profileSkillsDir, realPath))
   if (!isPathWithin(fullPath, profileSkillsDir)) {
