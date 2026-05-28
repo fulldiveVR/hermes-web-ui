@@ -1,5 +1,6 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
-import { hasApiKey, isStoredSuperAdmin } from '@/api/client'
+import { hasApiKey, isStoredSuperAdmin, setApiKey } from '@/api/client'
+import { exchangeSsoToken } from '@/api/auth'
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -120,7 +121,37 @@ const router = createRouter({
   ],
 })
 
-router.beforeEach((to, _from, next) => {
+function readSsoTokenFromLocation(): string | null {
+  const directToken = new URLSearchParams(window.location.search).get('token')
+  if (directToken) return directToken
+
+  const hashQuery = window.location.hash.split('?')[1]
+  if (!hashQuery) return null
+  return new URLSearchParams(hashQuery).get('token')
+}
+
+function removeSsoTokenFromUrl() {
+  const cleanUrl = `${window.location.origin}/#/hermes/chat`
+  window.history.replaceState({}, document.title, cleanUrl)
+}
+
+router.beforeEach(async (to, _from, next) => {
+  const ssoToken = readSsoTokenFromLocation()
+  if (ssoToken) {
+    try {
+      const session = await exchangeSsoToken(ssoToken)
+      setApiKey(session.token)
+      if (session.profile) localStorage.setItem('hermes_active_profile_name', session.profile)
+      removeSsoTokenFromUrl()
+      next({ name: 'hermes.chat', replace: true })
+      return
+    } catch {
+      removeSsoTokenFromUrl()
+      next({ name: 'login', replace: true })
+      return
+    }
+  }
+
   // Public pages don't need auth
   if (to.meta.public) {
     // Already has key, skip login

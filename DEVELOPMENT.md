@@ -19,6 +19,39 @@ npm run build
 - `npm run test:e2e` runs Playwright browser tests against a mocked BFF API.
 - `npm run build` type-checks and builds both client and server.
 
+## Local UI Against Deployed Backend
+
+For real-world UI testing without running a local hub or local Koa backend, point
+the Vite dev server at the deployed Web UI backend:
+
+```bash
+VITE_BACKEND_URL=https://hermes-web.roomcord.com \
+  npm run dev:client -- --host 0.0.0.0 --port 5180 --strictPort
+```
+
+Then open:
+
+```text
+http://localhost:5180/
+```
+
+This keeps the frontend local while proxying `/api`, `/health`, `/socket.io`,
+and related backend calls to the deployed environment. To keep it running in the
+background during manual testing:
+
+```bash
+tmux new-session -d -s hermes-web-ui-local \
+  'cd /Users/marina/projects/hermes-web-ui && VITE_BACKEND_URL=https://hermes-web.roomcord.com ./node_modules/.bin/vite --host 0.0.0.0 --port 5180 --strictPort'
+```
+
+Useful follow-up commands:
+
+```bash
+tmux attach -t hermes-web-ui-local
+tmux kill-session -t hermes-web-ui-local
+curl http://localhost:5180/health
+```
+
 ## Architecture
 
 - Frontend code lives under `packages/client/src`.

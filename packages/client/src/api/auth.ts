@@ -27,6 +27,27 @@ export async function loginWithPassword(username: string, password: string): Pro
   return data.token
 }
 
+export interface SsoLoginResponse {
+  token: string
+  tenant: string
+  profile: string
+}
+
+export async function exchangeSsoToken(token: string): Promise<SsoLoginResponse> {
+  const res = await fetch('/api/auth/sso', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    const err: any = new Error(data.error || 'Login link is invalid or expired')
+    err.status = res.status
+    throw err
+  }
+  return res.json()
+}
+
 export interface CurrentUser {
   id: number
   username: string

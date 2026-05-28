@@ -525,6 +525,25 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  async function loadSessionDetail(sessionId: string, profile?: string | null): Promise<boolean> {
+    try {
+      const detail = await fetchSession(sessionId, profile)
+      if (!detail || activeSessionId.value !== sessionId) return false
+      const target = sessions.value.find(s => s.id === sessionId)
+      if (!target) return false
+      target.messages = mapHermesMessages(detail.messages || [])
+      if (detail.title) target.title = detail.title
+      if (detail.input_tokens != null) target.inputTokens = detail.input_tokens
+      if (detail.output_tokens != null) target.outputTokens = detail.output_tokens
+      target.messageCount = detail.message_count
+      activeSession.value = target
+      return true
+    } catch (detailErr) {
+      console.error('Failed to load session messages via detail endpoint:', detailErr)
+      return false
+    }
+  }
+
 
   function createSession(options: { profile?: string; model?: string; provider?: string } = {}): Session {
     const session: Session = {
@@ -578,11 +597,12 @@ export const useChatStore = defineStore('chat', () => {
     if (!activeSession.value) return
 
     isLoadingMessages.value = true
+    const detailLoad = loadSessionDetail(sessionId, activeSession.value.profile)
 
     try {
       // Load messages via Socket.IO resume (server loads from DB if not in memory)
       await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('resume timeout')), 15_000)
+        const timeout = setTimeout(() => reject(new Error('resume timeout')), 3_000)
         resumeSession(sessionId, (data) => {
           clearTimeout(timeout)
           if (data.session_id !== sessionId || activeSessionId.value !== sessionId) {
@@ -719,6 +739,10 @@ export const useChatStore = defineStore('chat', () => {
     } catch (err) {
       console.error('Failed to load session messages via resume:', err)
     } finally {
+      const target = sessions.value.find(s => s.id === sessionId)
+      if (target && target.messages.length === 0 && (target.messageCount == null || target.messageCount > 0)) {
+        await detailLoad
+      }
       isLoadingMessages.value = false
     }
 
