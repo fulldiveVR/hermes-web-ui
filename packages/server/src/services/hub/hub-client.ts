@@ -58,6 +58,30 @@ export interface HubSessionMessage {
   reasoning: string | null
 }
 
+export interface HubSkillInfo {
+  name: string
+  description: string
+  enabled?: boolean
+  source?: 'builtin' | 'hub' | 'local' | 'external'
+  modified?: boolean
+  patchCount?: number
+  useCount?: number
+  viewCount?: number
+  pinned?: boolean
+}
+
+export interface HubSkillCategory {
+  name: string
+  description: string
+  skills: HubSkillInfo[]
+}
+
+export interface HubSkillFileEntry {
+  path: string
+  name: string
+  isDir: boolean
+}
+
 export class HubError extends Error {
   constructor(public status: number, message: string, public body?: string) {
     super(message)
@@ -110,6 +134,31 @@ export const hubClient = {
     })
   },
 
+  async requestUIEmailLoginCode(email: string, sessionId?: string): Promise<{ success: boolean; sessionId: string; expiresIn: number }> {
+    return hubJson('/v1/ui-login/email/request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, sessionId }),
+    })
+  },
+
+  async verifyUIEmailLoginCode(
+    sessionId: string,
+    code: string,
+    tenantId?: string,
+  ): Promise<{
+    tenantID?: string
+    displayName?: string
+    requiresTenantSelection?: boolean
+    tenants?: Array<{ id: string; displayName?: string }>
+  }> {
+    return hubJson('/v1/ui-login/email/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, code, tenantId }),
+    })
+  },
+
   /** Mint an SSO token via the hub control API (used for local demos/tests). */
   async mintUILoginToken(tenantId: string): Promise<{ token: string; url: string; expiresAt: string }> {
     return hubJson(`/v1/tenants/${encodeURIComponent(tenantId)}/ui-login-token`, { method: 'POST' })
@@ -137,6 +186,28 @@ export const hubClient = {
     memory_mtime: number | null; user_mtime: number | null; soul_mtime: number | null
   }> {
     return hubJson(`/v1/tenants/${encodeURIComponent(tenantId)}/memory`)
+  },
+
+  async listSkills(tenantId: string): Promise<{ categories: HubSkillCategory[]; archived: HubSkillInfo[] }> {
+    const data = await hubJson<{ categories?: HubSkillCategory[]; archived?: HubSkillInfo[] }>(
+      `/v1/tenants/${encodeURIComponent(tenantId)}/skills`,
+    )
+    return { categories: data.categories ?? [], archived: data.archived ?? [] }
+  },
+
+  async listSkillFiles(tenantId: string, category: string, skill: string): Promise<HubSkillFileEntry[]> {
+    const data = await hubJson<{ files?: HubSkillFileEntry[] }>(
+      `/v1/tenants/${encodeURIComponent(tenantId)}/skills/${encodeURIComponent(category)}/${encodeURIComponent(skill)}/files`,
+    )
+    return data.files ?? []
+  },
+
+  async getSkillFile(tenantId: string, skillPath: string): Promise<string> {
+    const encodedPath = skillPath.split('/').map(segment => encodeURIComponent(segment)).join('/')
+    const data = await hubJson<{ content: string }>(
+      `/v1/tenants/${encodeURIComponent(tenantId)}/skill-files/${encodedPath}`,
+    )
+    return data.content
   },
 
   /** Create a run on the tenant agent. Wakes a hibernated agent on the hub. */

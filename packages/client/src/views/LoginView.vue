@@ -3,16 +3,19 @@ import { ref, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { setApiKey, hasApiKey } from "@/api/client";
-import { fetchAuthStatus, loginWithPassword } from "@/api/auth";
+import { fetchAuthStatus, requestEmailLoginCode, verifyEmailLoginCode, type EmailLoginTenantChoice } from "@/api/auth";
 
 const { t } = useI18n();
 const router = useRouter();
 
-const username = ref("");
-const password = ref("");
+const email = ref("");
+const code = ref("");
+const emailSessionId = ref("");
+const codeSent = ref(false);
+const tenantChoices = ref<EmailLoginTenantChoice[]>([]);
+const selectedTenantId = ref("");
 const loading = ref(false);
 const errorMsg = ref("");
-const showLockResetHint = ref(false);
 
 // If already has a key, try to go to main page
 if (hasApiKey()) {
@@ -28,30 +31,62 @@ onMounted(async () => {
 });
 
 async function handleLogin() {
-  await handlePasswordLogin();
+  if (!codeSent.value) {
+    await handleEmailCodeRequest();
+    return;
+  }
+  await handleEmailCodeVerify();
 }
 
-async function handlePasswordLogin() {
-  if (!username.value.trim() || !password.value) {
-    errorMsg.value = t("login.credentialsRequired");
+async function handleEmailCodeRequest() {
+  if (!email.value.trim()) {
+    errorMsg.value = t("login.emailRequired");
     return;
   }
 
   loading.value = true;
   errorMsg.value = "";
-  showLockResetHint.value = false;
 
   try {
-    const sessionToken = await loginWithPassword(username.value.trim(), password.value);
-    setApiKey(sessionToken);
+    const result = await requestEmailLoginCode(email.value.trim(), emailSessionId.value || undefined);
+    emailSessionId.value = result.sessionId;
+    codeSent.value = true;
+  } catch (err: any) {
+    errorMsg.value = err.message || t("login.emailCodeSendFailed");
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function handleEmailCodeVerify() {
+  if (!emailSessionId.value || !code.value.trim()) {
+    errorMsg.value = t("login.codeRequired");
+    return;
+  }
+
+  loading.value = true;
+  errorMsg.value = "";
+
+  try {
+    const result = await verifyEmailLoginCode(
+      emailSessionId.value,
+      code.value.trim(),
+      selectedTenantId.value || undefined,
+    );
+    if (result.requiresTenantSelection) {
+      tenantChoices.value = result.tenants || [];
+      selectedTenantId.value = tenantChoices.value[0]?.id || "";
+      return;
+    }
+    if (!result.token) {
+      errorMsg.value = t("login.invalidCode");
+      return;
+    }
+    setApiKey(result.token);
+    if (result.profile) localStorage.setItem("hermes_active_profile_name", result.profile);
     router.replace("/hermes/chat");
   } catch (err: any) {
-    if (err.status === 429 || err.status === 503) {
-      errorMsg.value = t("login.tooManyAttempts");
-      showLockResetHint.value = true;
-    } else {
-      errorMsg.value = err.message || t("login.invalidCredentials");
-    }
+    errorMsg.value = err.message || t("login.invalidCode");
   } finally {
     loading.value = false;
   }
@@ -69,29 +104,34 @@ async function handlePasswordLogin() {
 
       <form class="login-form" @submit.prevent="handleLogin">
         <input
-          v-model="username"
-          type="text"
+          v-model="email"
+          type="email"
           class="login-input"
-          :placeholder="t('login.usernamePlaceholder')"
+          :placeholder="t('login.emailPlaceholder')"
           autofocus
+          :disabled="codeSent"
         />
         <input
-          v-model="password"
-          type="password"
+          v-if="codeSent"
+          v-model="code"
+          inputmode="numeric"
+          autocomplete="one-time-code"
           class="login-input"
-          :placeholder="t('login.passwordPlaceholder')"
+          :placeholder="t('login.codePlaceholder')"
           @keyup.enter="handleLogin"
         />
+        <select v-if="tenantChoices.length > 1" v-model="selectedTenantId" class="login-input">
+          <option v-for="tenant in tenantChoices" :key="tenant.id" :value="tenant.id">
+            {{ tenant.displayName || tenant.id }}
+          </option>
+        </select>
 
         <div v-if="errorMsg" class="login-error">{{ errorMsg }}</div>
-        <div v-if="showLockResetHint" class="login-lock-hint">
-          <span>{{ t("login.lockResetHint") }}</span>
-          <code>hermes-web-ui clear-login-locks --restart</code>
-          <span>{{ t("login.defaultLoginResetHint") }}</span>
-          <code>hermes-web-ui reset-default-login</code>
+        <div v-if="codeSent" class="login-code-hint">
+          {{ t("login.codeSent") }}
         </div>
         <button type="submit" class="login-btn" :disabled="loading">
-          {{ loading ? "..." : t("login.submit") }}
+          {{ loading ? "..." : !codeSent ? t("login.sendCode") : t("login.submit") }}
         </button>
       </form>
     </div>
@@ -172,6 +212,12 @@ async function handlePasswordLogin() {
 .login-error {
   font-size: 13px;
   color: $error;
+  text-align: left;
+}
+
+.login-code-hint {
+  font-size: 13px;
+  color: $text-secondary;
   text-align: left;
 }
 

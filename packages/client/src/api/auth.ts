@@ -48,6 +48,60 @@ export async function exchangeSsoToken(token: string): Promise<SsoLoginResponse>
   return res.json()
 }
 
+export interface EmailLoginRequestResponse {
+  success: boolean
+  sessionId: string
+  expiresIn: number
+}
+
+export async function requestEmailLoginCode(email: string, sessionId?: string): Promise<EmailLoginRequestResponse> {
+  const res = await fetch('/api/auth/email/request', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, sessionId }),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    const err: any = new Error(data.error || 'Failed to send verification code')
+    err.status = res.status
+    throw err
+  }
+  return res.json()
+}
+
+export interface EmailLoginTenantChoice {
+  id: string
+  displayName?: string
+}
+
+export interface EmailLoginVerifyResponse {
+  token?: string
+  tenant?: string
+  profile?: string
+  displayName?: string
+  requiresTenantSelection?: boolean
+  tenants?: EmailLoginTenantChoice[]
+}
+
+export async function verifyEmailLoginCode(
+  sessionId: string,
+  code: string,
+  tenantId?: string,
+): Promise<EmailLoginVerifyResponse> {
+  const res = await fetch('/api/auth/email/verify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId, code, tenantId }),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    const err: any = new Error(data.error || 'Verification code is invalid or expired')
+    err.status = res.status
+    throw err
+  }
+  return res.json()
+}
+
 export interface CurrentUser {
   id: number
   username: string

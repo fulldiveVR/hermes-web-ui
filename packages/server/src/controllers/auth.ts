@@ -156,6 +156,86 @@ export async function ssoLogin(ctx: Context) {
   ctx.body = { token: jwt, tenant: tenantId, profile: tenantId }
 }
 
+async function issueTenantLoginResponse(ctx: Context, tenantId: string, displayName?: string) {
+  const user = upsertTenantUser(tenantId)
+  if (!user) {
+    ctx.status = 500
+    ctx.body = { error: 'Failed to establish tenant session' }
+    return
+  }
+
+  let jwt: string
+  try {
+    jwt = await issueUserJwt(user)
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err?.message || 'Failed to issue session token' }
+    return
+  }
+
+  ctx.body = { token: jwt, tenant: tenantId, profile: tenantId, displayName }
+}
+
+/**
+ * POST /api/auth/email/request
+ * Ask Hub to email a verification code to a tenant owner address.
+ */
+export async function requestEmailLogin(ctx: Context) {
+  const { email, sessionId } = ctx.request.body as { email?: string; sessionId?: string }
+  const normalized = String(email || '').trim().toLowerCase()
+  if (!normalized) {
+    ctx.status = 400
+    ctx.body = { error: 'Email is required' }
+    return
+  }
+
+  try {
+    ctx.body = await hubClient.requestUIEmailLoginCode(normalized, typeof sessionId === 'string' ? sessionId : undefined)
+  } catch (err: any) {
+    ctx.status = err?.status === 400 ? 400 : err?.status === 503 ? 503 : 502
+    ctx.body = { error: err?.status === 503 ? 'Email login is not configured' : 'Failed to send verification code' }
+  }
+}
+
+/**
+ * POST /api/auth/email/verify
+ * Verify an emailed code with Hub, then issue the normal tenant-scoped Web UI JWT.
+ */
+export async function verifyEmailLogin(ctx: Context) {
+  const { sessionId, code, tenantId } = ctx.request.body as { sessionId?: string; code?: string; tenantId?: string }
+  if (!sessionId || !code) {
+    ctx.status = 400
+    ctx.body = { error: 'Session and code are required' }
+    return
+  }
+
+  let result: Awaited<ReturnType<typeof hubClient.verifyUIEmailLoginCode>>
+  try {
+    result = await hubClient.verifyUIEmailLoginCode(
+      String(sessionId).trim(),
+      String(code).trim(),
+      typeof tenantId === 'string' ? tenantId.trim() : undefined,
+    )
+  } catch (err: any) {
+    ctx.status = err?.status === 401 ? 401 : err?.status === 403 ? 403 : 502
+    ctx.body = { error: err?.status === 401 ? 'Verification code is invalid or expired' : 'Failed to verify login code' }
+    return
+  }
+
+  if (result.requiresTenantSelection) {
+    ctx.body = { requiresTenantSelection: true, tenants: result.tenants || [] }
+    return
+  }
+
+  if (!result.tenantID) {
+    ctx.status = 401
+    ctx.body = { error: 'Verification code is invalid or expired' }
+    return
+  }
+
+  await issueTenantLoginResponse(ctx, result.tenantID, result.displayName)
+}
+
 /**
  * POST /api/auth/setup
  * Set up username/password (protected).

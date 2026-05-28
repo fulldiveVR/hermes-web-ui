@@ -7,6 +7,8 @@ export const authPublicRoutes = new Router()
 authPublicRoutes.get('/api/auth/status', ctrl.authStatus)
 authPublicRoutes.post('/api/auth/login', ctrl.login)
 authPublicRoutes.post('/api/auth/sso', ctrl.ssoLogin)
+authPublicRoutes.post('/api/auth/email/request', ctrl.requestEmailLogin)
+authPublicRoutes.post('/api/auth/email/verify', ctrl.verifyEmailLogin)
 
 // Protected routes (auth required)
 export const authProtectedRoutes = new Router()

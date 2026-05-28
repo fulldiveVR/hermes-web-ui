@@ -4,7 +4,8 @@ import { mount } from '@vue/test-utils'
 
 const mockReplace = vi.hoisted(() => vi.fn())
 const mockFetchAuthStatus = vi.hoisted(() => vi.fn())
-const mockLoginWithPassword = vi.hoisted(() => vi.fn())
+const mockRequestEmailLoginCode = vi.hoisted(() => vi.fn())
+const mockVerifyEmailLoginCode = vi.hoisted(() => vi.fn())
 const mockSetApiKey = vi.hoisted(() => vi.fn())
 const mockHasApiKey = vi.hoisted(() => vi.fn())
 
@@ -27,71 +28,44 @@ vi.mock('@/api/client', () => ({
 
 vi.mock('@/api/auth', () => ({
   fetchAuthStatus: mockFetchAuthStatus,
-  loginWithPassword: mockLoginWithPassword,
+  requestEmailLoginCode: mockRequestEmailLoginCode,
+  verifyEmailLoginCode: mockVerifyEmailLoginCode,
 }))
 
 import LoginView from '@/views/LoginView.vue'
 
-describe('LoginView password login', () => {
+describe('LoginView email login', () => {
   beforeEach(() => {
     delete (window as any).__LOGIN_TOKEN__
+    window.localStorage.clear()
     vi.clearAllMocks()
     mockHasApiKey.mockReturnValue(false)
     mockFetchAuthStatus.mockResolvedValue({ hasPasswordLogin: true, username: 'admin' })
   })
 
-  it('logs in with username and password', async () => {
-    mockLoginWithPassword.mockResolvedValue('jwt-token')
+  it('logs in with email code', async () => {
+    mockRequestEmailLoginCode.mockResolvedValue({ success: true, sessionId: 'email-session', expiresIn: 600 })
+    mockVerifyEmailLoginCode.mockResolvedValue({ token: 'jwt-token', profile: 'tenant-alpha', tenant: 'tenant-alpha' })
     const wrapper = mount(LoginView)
 
+    await wrapper.find('input.login-input').setValue('owner@example.com')
+    await wrapper.find('form.login-form').trigger('submit')
+    expect(mockRequestEmailLoginCode).toHaveBeenCalledWith('owner@example.com', undefined)
+
     const inputs = wrapper.findAll('input.login-input')
-    await inputs[0].setValue('admin')
     await inputs[1].setValue('123456')
     await wrapper.find('form.login-form').trigger('submit')
 
-    expect(mockLoginWithPassword).toHaveBeenCalledWith('admin', '123456')
+    expect(mockVerifyEmailLoginCode).toHaveBeenCalledWith('email-session', '123456', undefined)
     expect(mockSetApiKey).toHaveBeenCalledWith('jwt-token')
+    expect(window.localStorage.getItem('hermes_active_profile_name')).toBe('tenant-alpha')
     expect(mockReplace).toHaveBeenCalledWith('/hermes/chat')
   })
 
-  it('shows the default login hint', () => {
+  it('shows email login by default', () => {
     const wrapper = mount(LoginView)
 
-    expect(wrapper.text()).toContain('login.defaultCredentialsHint')
-  })
-
-  it('shows an error when password login fails', async () => {
-    mockLoginWithPassword.mockRejectedValue(new Error('Invalid username or password'))
-    const wrapper = mount(LoginView)
-
-    const inputs = wrapper.findAll('input.login-input')
-    await inputs[0].setValue('admin')
-    await inputs[1].setValue('bad-password')
-    await wrapper.find('form.login-form').trigger('submit')
-
-    expect(wrapper.find('.login-error').text()).toBe('Invalid username or password')
-    expect(mockSetApiKey).not.toHaveBeenCalled()
-    expect(mockReplace).not.toHaveBeenCalled()
-  })
-
-  it('shows the reset command hint when the login IP is locked', async () => {
-    const err: any = new Error('Too many login attempts')
-    err.status = 429
-    mockLoginWithPassword.mockRejectedValue(err)
-    const wrapper = mount(LoginView)
-
-    const inputs = wrapper.findAll('input.login-input')
-    await inputs[0].setValue('admin')
-    await inputs[1].setValue('123456')
-    await wrapper.find('form.login-form').trigger('submit')
-
-    expect(wrapper.find('.login-error').text()).toBe('login.tooManyAttempts')
-    expect(wrapper.find('.login-lock-hint').text()).toContain('login.lockResetHint')
-    expect(wrapper.find('.login-lock-hint').text()).toContain('login.defaultLoginResetHint')
-    const commands = wrapper.findAll('.login-lock-hint code').map(command => command.text())
-    expect(commands).toEqual([
-      'hermes-web-ui clear-login-locks --restart',
-      'hermes-web-ui reset-default-login',
-    ])
+    expect(wrapper.find('input.login-input').attributes('placeholder')).toBe('login.emailPlaceholder')
+    expect(wrapper.text()).not.toContain('login.passwordMode')
   })
 })

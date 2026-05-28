@@ -115,6 +115,28 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       return
     }
 
+    if (pathname === '/api/auth/email/request') {
+      if (request.method() !== 'POST') {
+        await route.fulfill(jsonResponse({ error: 'Method not allowed' }, 405))
+        return
+      }
+      await route.fulfill(jsonResponse({ success: true, sessionId: 'playwright-email-session', expiresIn: 600 }))
+      return
+    }
+
+    if (pathname === '/api/auth/email/verify') {
+      if (request.method() !== 'POST') {
+        await route.fulfill(jsonResponse({ error: 'Method not allowed' }, 405))
+        return
+      }
+      if (tokenValidationStatus !== 200) {
+        await route.fulfill(jsonResponse({ error: 'Verification code is invalid or expired' }, tokenValidationStatus))
+        return
+      }
+      await route.fulfill(jsonResponse({ token: TEST_ACCESS_KEY, tenant: 'research', profile: 'research' }))
+      return
+    }
+
     if (pathname === '/api/auth/me') {
       await route.fulfill(jsonResponse({
         user: {
