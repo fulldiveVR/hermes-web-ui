@@ -14,11 +14,18 @@ import { config } from '../../config'
 export interface HubTenant {
   id: string
   displayName?: string
+  owner?: {
+    email?: string
+    name?: string
+    externalUserId?: string
+  }
   status?: string
   access?: { status?: string; message?: string }
   agent?: Record<string, unknown>
   [key: string]: unknown
 }
+
+export type HubAgentCronJob = Record<string, any>
 
 export interface HubSession {
   id: string
@@ -208,6 +215,59 @@ export const hubClient = {
       `/v1/tenants/${encodeURIComponent(tenantId)}/skill-files/${encodedPath}`,
     )
     return data.content
+  },
+
+  async listAgentCronJobs(tenantId: string): Promise<HubAgentCronJob[]> {
+    const data = await hubJson<{ jobs?: HubAgentCronJob[] }>(
+      `/v1/tenants/${encodeURIComponent(tenantId)}/agent-cron`,
+    )
+    return data.jobs ?? []
+  },
+
+  async getAgentCronJob(tenantId: string, jobId: string): Promise<HubAgentCronJob> {
+    const data = await hubJson<{ job?: HubAgentCronJob }>(
+      `/v1/tenants/${encodeURIComponent(tenantId)}/agent-cron/${encodeURIComponent(jobId)}`,
+    )
+    return data.job ?? {}
+  },
+
+  async createAgentCronJob(tenantId: string, body: unknown): Promise<HubAgentCronJob> {
+    const data = await hubJson<{ job?: HubAgentCronJob }>(
+      `/v1/tenants/${encodeURIComponent(tenantId)}/agent-cron`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body ?? {}),
+      },
+    )
+    return data.job ?? {}
+  },
+
+  async updateAgentCronJob(tenantId: string, jobId: string, body: unknown): Promise<HubAgentCronJob> {
+    const data = await hubJson<{ job?: HubAgentCronJob }>(
+      `/v1/tenants/${encodeURIComponent(tenantId)}/agent-cron/${encodeURIComponent(jobId)}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body ?? {}),
+      },
+    )
+    return data.job ?? {}
+  },
+
+  async deleteAgentCronJob(tenantId: string, jobId: string): Promise<{ ok?: boolean; [key: string]: unknown }> {
+    return hubJson(
+      `/v1/tenants/${encodeURIComponent(tenantId)}/agent-cron/${encodeURIComponent(jobId)}`,
+      { method: 'DELETE' },
+    )
+  },
+
+  async postAgentCronJobAction(tenantId: string, jobId: string, action: 'pause' | 'resume' | 'run'): Promise<HubAgentCronJob> {
+    const data = await hubJson<{ job?: HubAgentCronJob }>(
+      `/v1/tenants/${encodeURIComponent(tenantId)}/agent-cron/${encodeURIComponent(jobId)}/${action}`,
+      { method: 'POST' },
+    )
+    return data.job ?? {}
   },
 
   /** Create a run on the tenant agent. Wakes a hibernated agent on the hub. */

@@ -3,11 +3,23 @@ import { readdir, stat, readFile } from 'fs/promises'
 import { join } from 'path'
 import { existsSync } from 'fs'
 import { getActiveProfileName, getProfileDir } from '../../services/hermes/hermes-profile'
+import { hubClient } from '../../services/hub/hub-client'
+import type { HubSession, HubSessionMessage } from '../../services/hub/hub-client'
 
 const SYNTHETIC_RUN_FILE = '__scheduler_metadata__.md'
 
 function requestedProfile(ctx: Context): string {
   return ctx.state?.profile?.name || getActiveProfileName() || 'default'
+}
+
+function requestedHubTenant(ctx: Context): string {
+  return ctx.state?.profile?.name || ctx.get('x-hermes-profile') || ''
+}
+
+function intQuery(value: unknown, defaultValue: number, maxValue: number): number {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed <= 0) return defaultValue
+  return Math.min(Math.floor(parsed), maxValue)
 }
 
 function getCronOutputDir(profile: string): string {
@@ -84,6 +96,12 @@ async function readCronJobs(profile: string): Promise<CronJobMetadata[]> {
   }
 }
 
+async function readCronJobsForContext(ctx: Context, profile: string): Promise<CronJobMetadata[]> {
+  const tenant = requestedHubTenant(ctx)
+  if (tenant) return hubClient.listAgentCronJobs(tenant).catch(() => [])
+  return readCronJobs(profile)
+}
+
 function coerceRunCount(value: CronJobMetadata['run_count']): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) return value
   if (typeof value === 'string') {
@@ -111,6 +129,54 @@ function toDisplayTime(value: string): string {
 function parseRunTimeFromFileName(fileName: string): string {
   const base = fileName.endsWith('.md') ? fileName.slice(0, -3) : fileName
   return toDisplayTime(base)
+}
+
+function cronJobIdFromSessionId(sessionId: string): string | null {
+  const match = String(sessionId || '').match(/^cron_(.+)_\d{8}_\d{6}$/)
+  return match?.[1] || null
+}
+
+function runTimeFromHubSession(session: HubSession): string {
+  const seconds = Number(session.last_active || session.started_at || 0)
+  if (Number.isFinite(seconds) && seconds > 0) {
+    return new Date(seconds * 1000).toISOString().replace('T', ' ').slice(0, 19)
+  }
+  return ''
+}
+
+function runEntryFromHubSession(session: HubSession): RunEntry | null {
+  const jobId = cronJobIdFromSessionId(session.id)
+  if (!jobId) return null
+  return {
+    jobId,
+    fileName: `${session.id}.md`,
+    runTime: runTimeFromHubSession(session),
+    size: 0,
+    hasOutput: true,
+  }
+}
+
+function finalAssistantContent(messages: HubSessionMessage[]): string {
+  const assistantMessages = messages
+    .filter(message => message.role === 'assistant' && String(message.content || '').trim())
+    .map(message => String(message.content).trim())
+  if (assistantMessages.length === 0) return ''
+  return assistantMessages.join('\n\n---\n\n')
+}
+
+async function listHubCronRuns(tenant: string, jobId: string | undefined, limit: number): Promise<RunEntry[]> {
+  const sessions = await hubClient.listSessions(tenant, 'cron')
+  return sessions
+    .map(runEntryFromHubSession)
+    .filter((run): run is RunEntry => !!run && (!jobId || run.jobId === jobId))
+    .sort((a, b) => b.runTime.localeCompare(a.runTime))
+    .slice(0, limit)
+}
+
+function sessionIdFromRunFile(fileName: string): string | null {
+  if (!fileName.endsWith('.md')) return null
+  const sessionId = fileName.slice(0, -3)
+  return sessionId.startsWith('cron_') ? sessionId : null
 }
 
 function syntheticRunEntry(job: CronJobMetadata): RunEntry | null {
@@ -186,9 +252,16 @@ function buildSyntheticContent(job: CronJobMetadata, runTime: string): string {
 export async function listRuns(ctx: Context) {
   const jobId = ctx.query.jobId as string | undefined
   const profile = requestedProfile(ctx)
+  const tenant = requestedHubTenant(ctx)
+  const limit = intQuery(ctx.query.limit, 100, 500)
   const cronOutput = getCronOutputDir(profile)
 
   try {
+    if (tenant) {
+      ctx.body = { runs: await listHubCronRuns(tenant, jobId, limit) }
+      return
+    }
+
     const runs: RunEntry[] = []
 
     if (existsSync(cronOutput)) {
@@ -224,7 +297,7 @@ export async function listRuns(ctx: Context) {
       }
     }
 
-    const jobs = await readCronJobs(profile)
+    const jobs = await readCronJobsForContext(ctx, profile)
     const targetJobs = jobId ? jobs.filter(job => getJobId(job) === jobId) : jobs
     for (const job of targetJobs) {
       const id = getJobId(job)
@@ -236,7 +309,7 @@ export async function listRuns(ctx: Context) {
     // Sort all runs by runTime descending
     runs.sort((a, b) => b.runTime.localeCompare(a.runTime))
 
-    ctx.body = { runs }
+    ctx.body = { runs: runs.slice(0, limit) }
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: err.message }
@@ -247,6 +320,7 @@ export async function listRuns(ctx: Context) {
 export async function readRun(ctx: Context) {
   const { jobId, fileName } = ctx.params
   const profile = requestedProfile(ctx)
+  const tenant = requestedHubTenant(ctx)
 
   if (!jobId || !fileName) {
     ctx.status = 400
@@ -268,8 +342,37 @@ export async function readRun(ctx: Context) {
     return
   }
 
+  if (tenant) {
+    const sessionId = sessionIdFromRunFile(fileName)
+    if (!sessionId || cronJobIdFromSessionId(sessionId) !== jobId) {
+      ctx.status = 404
+      ctx.body = { error: 'Run output not found' }
+      return
+    }
+
+    try {
+      const detail = await hubClient.getSession(tenant, sessionId)
+      if (!detail.session || detail.session.source !== 'cron') {
+        ctx.status = 404
+        ctx.body = { error: 'Run output not found' }
+        return
+      }
+      ctx.body = {
+        jobId,
+        fileName,
+        runTime: runTimeFromHubSession(detail.session),
+        content: finalAssistantContent(detail.messages) || 'No assistant output was recorded for this cron run.',
+      } satisfies RunDetail
+      return
+    } catch (err: any) {
+      ctx.status = err?.status === 404 ? 404 : 502
+      ctx.body = { error: err?.status === 404 ? 'Run output not found' : 'Failed to load cron run from hub' }
+      return
+    }
+  }
+
   if (fileName === SYNTHETIC_RUN_FILE) {
-    const jobs = await readCronJobs(profile)
+    const jobs = await readCronJobsForContext(ctx, profile)
     const job = jobs.find(candidate => getJobId(candidate) === jobId)
     const synthetic = job ? syntheticRunEntry(job) : null
     if (!job || !synthetic) {

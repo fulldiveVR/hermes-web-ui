@@ -321,7 +321,10 @@ export async function list(ctx: any) {
       name: tenant.id,
       active: tenant.id === activeProfileName,
       model: '—',
-      alias: tenant.displayName && tenant.displayName !== tenant.id ? tenant.displayName : '',
+      alias: tenant.owner?.email || tenant.owner?.name || '',
+      displayName: tenant.displayName,
+      email: tenant.owner?.email,
+      userName: tenant.owner?.name,
     }))
 
     profiles = filterProfilesForUser(ctx, profiles)

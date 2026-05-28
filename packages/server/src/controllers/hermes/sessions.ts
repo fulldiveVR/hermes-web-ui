@@ -25,12 +25,46 @@ import { listUserProfiles } from '../../db/hermes/users-store'
 import { readConfigYamlForProfile } from '../../services/config-helpers'
 import { hubClient } from '../../services/hub/hub-client'
 
-// Variant B "one forever session" model: the web-ui surfaces the tenant's real
-// conversation(s), not system-generated sessions. Cron jobs (e.g. the
-// media-sources processor) spawn a new session every run; those are hidden.
-const SYSTEM_SESSION_SOURCES = new Set(['cron', 'tool'])
-function isConversationSession(s: { source?: string }): boolean {
-  return !SYSTEM_SESSION_SOURCES.has(String(s.source || ''))
+// Variant B: keep internal tool sessions hidden, and hide known housekeeping
+// cron jobs. User-facing cron jobs are conversations because their final answer
+// is delivered to the user and should be visible in Web UI.
+const SYSTEM_SESSION_SOURCES = new Set(['tool'])
+const HIDDEN_CRON_JOB_IDS = new Set(['hub_media_sources'])
+
+function cronJobIdFromSessionId(id: string): string {
+  const match = String(id || '').match(/^cron_(.+)_\d{8}_\d{6}$/)
+  return match?.[1] || ''
+}
+
+function isHiddenCronSession(s: { id?: string; source?: string }): boolean {
+  if (String(s.source || '') !== 'cron') return false
+  return HIDDEN_CRON_JOB_IDS.has(cronJobIdFromSessionId(String(s.id || '')))
+}
+
+function isConversationSession(s: { id?: string; source?: string }): boolean {
+  if (SYSTEM_SESSION_SOURCES.has(String(s.source || ''))) return false
+  return !isHiddenCronSession(s)
+}
+
+function normalizeCronSessionForList<T extends { id: string; source?: string; title?: string | null; preview?: string }>(
+  session: T,
+  cronJobNames: Map<string, string>,
+): T {
+  if (String(session.source || '') !== 'cron') return session
+  const jobId = cronJobIdFromSessionId(session.id)
+  const jobName = cronJobNames.get(jobId) || jobId
+  return {
+    ...session,
+    title: jobName ? `Cron: ${jobName}` : session.title,
+    preview: session.preview?.startsWith('[IMPORTANT:')
+      ? 'Scheduled job response'
+      : session.preview,
+  }
+}
+
+function visibleHubMessages(session: { source?: string }, messages: any[]): any[] {
+  if (String(session.source || '') !== 'cron') return messages
+  return messages.filter(message => message.role === 'assistant' && String(message.content || '').trim())
 }
 
 function getPendingDeletedSessionIds(): Set<string> {
@@ -333,11 +367,15 @@ export async function list(ctx: any) {
     return
   }
   try {
-    // Chat sidebar: hide system/cron sessions; show the tenant's real
-    // conversations (most recent first).
+    // Chat sidebar: hide housekeeping sessions; show tenant conversations and
+    // user-facing cron responses (most recent first).
+    const cronJobNames = new Map(
+      (await hubClient.listAgentCronJobs(profile).catch(() => []))
+        .map(job => [String(job.id || job.job_id || ''), String(job.name || '')] as const),
+    )
     const sessions = (await hubClient.listSessions(profile, source))
       .filter(isConversationSession)
-      .map(s => ({ ...s, profile }))
+      .map(s => normalizeCronSessionForList({ ...s, profile }, cronJobNames))
       .sort((a, b) => Number(b.last_active || b.started_at || 0) - Number(a.last_active || a.started_at || 0))
     ctx.body = { sessions }
   } catch (err: any) {
@@ -372,9 +410,13 @@ export async function listHermesSessions(ctx: any) {
     // source=api_server, alongside whatsapp/telegram/cron/a2a sessions — show
     // them all (the legacy web-ui excluded api_server, which would now hide the
     // user's own chats).
+    const cronJobNames = new Map(
+      (await hubClient.listAgentCronJobs(profile).catch(() => []))
+        .map(job => [String(job.id || job.job_id || ''), String(job.name || '')] as const),
+    )
     const sessions = (await hubClient.listSessions(profile, source))
       .filter(isConversationSession)
-      .map(s => ({ ...s, profile, webui_imported: false }))
+      .map(s => normalizeCronSessionForList({ ...s, profile, webui_imported: false }, cronJobNames))
     ctx.body = { sessions }
   } catch (err: any) {
     logger.warn(err, '[listHermesSessions] hub session list failed for tenant "%s"', profile)
@@ -415,7 +457,7 @@ export async function get(ctx: any) {
       session: {
         ...detail.session,
         profile,
-        messages: detail.messages,
+        messages: visibleHubMessages(detail.session, detail.messages),
         thread_session_count: detail.thread_session_count ?? 1,
       },
     }
@@ -454,7 +496,7 @@ export async function getHermesSession(ctx: any) {
       session: {
         ...detail.session,
         profile,
-        messages: detail.messages,
+        messages: visibleHubMessages(detail.session, detail.messages),
         thread_session_count: detail.thread_session_count ?? 1,
       },
     }

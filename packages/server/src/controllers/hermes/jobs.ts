@@ -5,6 +5,7 @@ import { join } from 'path'
 import { promisify } from 'util'
 import { getHermesBin } from '../../services/hermes/hermes-path'
 import { getActiveProfileName, getProfileDir } from '../../services/hermes/hermes-profile'
+import { hubClient } from '../../services/hub/hub-client'
 
 const execFileAsync = promisify(execFile)
 const TIMEOUT_MS = 60_000
@@ -14,6 +15,10 @@ type JobRecord = Record<string, any>
 function resolveProfile(ctx: Context): string {
   const requestedProfile = ctx.state?.profile?.name
   return requestedProfile || getActiveProfileName()
+}
+
+function resolveHubTenant(ctx: Context): string {
+  return ctx.state?.profile?.name || ctx.get('x-hermes-profile') || ''
 }
 
 function resolveProfileDir(profile: string): string {
@@ -156,12 +161,23 @@ function findCreatedJob(beforeJobs: JobRecord[], afterJobs: JobRecord[]): JobRec
 }
 
 export async function list(ctx: Context) {
+  const tenant = resolveHubTenant(ctx)
+  if (tenant) {
+    ctx.body = { jobs: (await hubClient.listAgentCronJobs(tenant)).map(normalizeJob) }
+    return
+  }
   const profile = resolveProfile(ctx)
   const includeDisabled = boolQuery(ctx.query.include_disabled, false)
   ctx.body = { jobs: readJobs(profile, includeDisabled) }
 }
 
 export async function get(ctx: Context) {
+  const tenant = resolveHubTenant(ctx)
+  if (tenant) {
+    const job = normalizeJob(await hubClient.getAgentCronJob(tenant, ctx.params.id))
+    ctx.body = { job }
+    return
+  }
   const profile = resolveProfile(ctx)
   const job = findJob(profile, ctx.params.id)
   if (!job) return sendJobNotFound(ctx)
@@ -169,6 +185,12 @@ export async function get(ctx: Context) {
 }
 
 export async function create(ctx: Context) {
+  const tenant = resolveHubTenant(ctx)
+  if (tenant) {
+    const job = normalizeJob(await hubClient.createAgentCronJob(tenant, getBody(ctx)))
+    ctx.body = { job }
+    return
+  }
   const profile = resolveProfile(ctx)
   const body = getBody(ctx)
   const schedule = String(body.schedule || body.schedule_display || '').trim()
@@ -214,6 +236,12 @@ export async function create(ctx: Context) {
 }
 
 export async function update(ctx: Context) {
+  const tenant = resolveHubTenant(ctx)
+  if (tenant) {
+    const job = normalizeJob(await hubClient.updateAgentCronJob(tenant, ctx.params.id, getBody(ctx)))
+    ctx.body = { job }
+    return
+  }
   const profile = resolveProfile(ctx)
   const body = getBody(ctx)
   if (!findJob(profile, ctx.params.id)) return sendJobNotFound(ctx)
@@ -259,6 +287,12 @@ export async function update(ctx: Context) {
 }
 
 export async function remove(ctx: Context) {
+  const tenant = resolveHubTenant(ctx)
+  if (tenant) {
+    const result = await hubClient.deleteAgentCronJob(tenant, ctx.params.id)
+    ctx.body = Object.keys(result).length > 0 ? result : { ok: true }
+    return
+  }
   const profile = resolveProfile(ctx)
   if (!findJob(profile, ctx.params.id)) return sendJobNotFound(ctx)
 
@@ -271,6 +305,12 @@ export async function remove(ctx: Context) {
 }
 
 export async function pause(ctx: Context) {
+  const tenant = resolveHubTenant(ctx)
+  if (tenant) {
+    const job = normalizeJob(await hubClient.postAgentCronJobAction(tenant, ctx.params.id, 'pause'))
+    ctx.body = { job }
+    return
+  }
   const profile = resolveProfile(ctx)
   if (!findJob(profile, ctx.params.id)) return sendJobNotFound(ctx)
 
@@ -284,6 +324,12 @@ export async function pause(ctx: Context) {
 }
 
 export async function resume(ctx: Context) {
+  const tenant = resolveHubTenant(ctx)
+  if (tenant) {
+    const job = normalizeJob(await hubClient.postAgentCronJobAction(tenant, ctx.params.id, 'resume'))
+    ctx.body = { job }
+    return
+  }
   const profile = resolveProfile(ctx)
   if (!findJob(profile, ctx.params.id)) return sendJobNotFound(ctx)
 
@@ -297,6 +343,12 @@ export async function resume(ctx: Context) {
 }
 
 export async function run(ctx: Context) {
+  const tenant = resolveHubTenant(ctx)
+  if (tenant) {
+    const job = normalizeJob(await hubClient.postAgentCronJobAction(tenant, ctx.params.id, 'run'))
+    ctx.body = { job }
+    return
+  }
   const profile = resolveProfile(ctx)
   if (!findJob(profile, ctx.params.id)) return sendJobNotFound(ctx)
 

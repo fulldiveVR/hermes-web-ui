@@ -20,6 +20,7 @@ const profilesStore = useProfilesStore()
 const activeName = computed(() => profilesStore.activeProfileName ?? '')
 const displayName = computed(() => activeName.value || 'default')
 const activeProfile = computed(() => profilesStore.profiles.find(profile => profile.name === displayName.value))
+const activeProfileLabel = computed(() => profileLabel(activeProfile.value, displayName.value))
 const runtimeStatuses = ref<ProfileRuntimeStatus[]>([])
 const runtimeLoading = ref(false)
 const showProfileModal = ref(false)
@@ -31,6 +32,10 @@ const gatewayRestarting = ref<Record<string, boolean>>({})
 const profileRestarting = ref<Record<string, boolean>>({})
 const profileSwitching = ref<Record<string, boolean>>({})
 const statusByProfile = computed(() => new Map(runtimeStatuses.value.map(status => [status.profile, status])))
+
+function profileLabel(profile: HermesProfile | null | undefined, fallback: string) {
+  return profile?.email || profile?.userName || fallback
+}
 
 async function loadRuntimeStatuses() {
   runtimeLoading.value = true
@@ -183,7 +188,7 @@ onMounted(() => {
     <div class="selector-label">{{ t('sidebar.profiles') }}</div>
     <div class="profile-display" data-testid="profile-selector-select" @click="openProfileModal">
       <ProfileAvatarView class="profile-avatar" :name="displayName" :avatar="activeProfile?.avatar" :size="24" />
-      <span class="profile-name">{{ displayName }}</span>
+      <span class="profile-name">{{ activeProfileLabel }}</span>
     </div>
 
     <NModal
@@ -197,7 +202,7 @@ onMounted(() => {
         <div class="profile-modal-header">
           <div class="profile-popover-title">
             <span class="profile-popover-name">{{ t('sidebar.profiles') }}</span>
-            <span class="profile-popover-subtitle">{{ t('profiles.runtime.activeProfile', { name: displayName }) }}</span>
+            <span class="profile-popover-subtitle">{{ t('profiles.runtime.activeProfile', { name: activeProfileLabel }) }}</span>
           </div>
         </div>
       </template>
@@ -214,7 +219,7 @@ onMounted(() => {
               <ProfileAvatarView class="profile-runtime-avatar" :name="profile.name" :avatar="profile.avatar" :size="34" />
               <div class="profile-runtime-info">
                 <div class="profile-runtime-name-row">
-                  <span class="profile-runtime-name">{{ profile.name }}</span>
+                  <span class="profile-runtime-name">{{ profileLabel(profile, profile.name) }}</span>
                   <span v-if="profile.name === displayName" class="active-badge">{{ t('profiles.runtime.activeTag') }}</span>
                 </div>
                 <div class="runtime-status-grid">

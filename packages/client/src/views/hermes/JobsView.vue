@@ -97,6 +97,7 @@ function handleSelectJob(jobId: string | null) {
           :selected-job-id="selectedJobId"
           :job-name-map="jobNameMap"
           :profile-key="activeProfileName"
+          :jobs="jobsStore.jobs"
         />
       </div>
     </div>
