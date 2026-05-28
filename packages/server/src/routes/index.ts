@@ -6,6 +6,7 @@ import { webhookRoutes } from './webhook'
 import { uploadRoutes } from './upload'
 import { updateRoutes } from './update'
 import { authPublicRoutes, authProtectedRoutes } from './auth'
+import { ssoRoutes } from './sso'
 
 // Hermes route modules
 import { sessionRoutes } from './hermes/sessions'
@@ -43,6 +44,7 @@ export function registerRoutes(app: any, authMiddleware: Array<(ctx: Context, ne
   app.use(healthRoutes.routes())
   app.use(webhookRoutes.routes())
   app.use(authPublicRoutes.routes())
+  app.use(ssoRoutes.routes())              // Variant B SSO landing page (public)
   app.use(ttsRoutes.routes())              // TTS proxy/generation — must be before auth
 
   // --- Auth middleware: all routes below require authentication ---

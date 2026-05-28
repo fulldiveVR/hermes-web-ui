@@ -51,4 +51,9 @@ export const config = {
   uploadDir: process.env.UPLOAD_DIR || join(appHome, 'upload'),
   dataDir: resolve(__dirname, '..', 'data'),
   corsOrigins: process.env.CORS_ORIGINS || '*',
+  // Variant B: the web-ui is a pure hub client. HUB_BASE_URL points at the
+  // hermes-hub control plane; HUB_API_TOKEN is the hub-tier service credential
+  // (empty when the hub runs in mock mode with auth disabled).
+  hubBaseUrl: (process.env.HUB_BASE_URL || 'http://127.0.0.1:8080').replace(/\/+$/, ''),
+  hubApiToken: process.env.HUB_API_TOKEN || '',
 }

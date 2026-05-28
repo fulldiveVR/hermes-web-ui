@@ -1,10 +1,10 @@
 import { mkdir, writeFile } from 'fs/promises'
 import { join } from 'path'
-import { safeReadFile, safeStat } from '../../services/config-helpers'
 import { getActiveProfileName, getProfileDir } from '../../services/hermes/hermes-profile'
+import { hubClient } from '../../services/hub/hub-client'
 
 function requestedProfile(ctx: any): string {
-  return ctx.state?.profile?.name || getActiveProfileName() || 'default'
+  return ctx.state?.profile?.name || ctx.state?.user?.profiles?.[0] || getActiveProfileName() || 'default'
 }
 
 function requestProfileDir(ctx: any): string {
@@ -12,17 +12,11 @@ function requestProfileDir(ctx: any): string {
 }
 
 export async function get(ctx: any) {
-  const hd = requestProfileDir(ctx)
-  const memoryPath = join(hd, 'memories', 'MEMORY.md')
-  const userPath = join(hd, 'memories', 'USER.md')
-  const soulPath = join(hd, 'SOUL.md')
-  const [memory, user, soul, memoryStat, userStat, soulStat] = await Promise.all([
-    safeReadFile(memoryPath), safeReadFile(userPath), safeReadFile(soulPath),
-    safeStat(memoryPath), safeStat(userPath), safeStat(soulPath),
-  ])
-  ctx.body = {
-    memory: memory || '', user: user || '', soul: soul || '',
-    memory_mtime: memoryStat?.mtime || null, user_mtime: userStat?.mtime || null, soul_mtime: soulStat?.mtime || null,
+  // Variant B: memory/persona files come from the tenant's HERMES_HOME via the hub.
+  try {
+    ctx.body = await hubClient.getMemory(requestedProfile(ctx))
+  } catch (err: any) {
+    ctx.body = { memory: '', user: '', soul: '', memory_mtime: null, user_mtime: null, soul_mtime: null }
   }
 }
 

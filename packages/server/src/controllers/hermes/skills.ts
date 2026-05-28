@@ -421,8 +421,15 @@ export async function usageStats(ctx: any) {
   try {
     ctx.body = await getSkillUsageStatsFromDb(days, undefined, requestedProfile(ctx))
   } catch (err: any) {
-    ctx.status = 500
-    ctx.body = { error: `Failed to read skill usage stats: ${err.message}` }
+    // Variant B: skill-usage analytics are derived from a local state.db that
+    // does not exist for a hub-hosted tenant. Degrade to empty stats rather
+    // than 500 until a hub-side skill-usage endpoint exists.
+    ctx.body = {
+      period_days: days,
+      summary: { total_skill_loads: 0, total_skill_edits: 0, total_skill_actions: 0, distinct_skills_used: 0 },
+      by_day: [],
+      top_skills: [],
+    }
   }
 }
 

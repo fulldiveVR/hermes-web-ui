@@ -18,8 +18,10 @@ import {
   type UserRole,
   type UserStatus,
 } from '../db/hermes/users-store'
+import { upsertTenantUser } from '../db/hermes/users-store'
 import { issueUserJwt } from '../middleware/user-auth'
 import { listProfileNamesFromDisk } from '../services/hermes/hermes-profile'
+import { hubClient } from '../services/hub/hub-client'
 
 /**
  * GET /api/auth/status
@@ -102,6 +104,56 @@ export async function login(ctx: Context) {
 
   recordPasswordSuccess(ip)
   ctx.body = { token }
+}
+
+/**
+ * POST /api/auth/sso
+ * Variant B SSO: exchange a hub-minted single-tenant login token for a
+ * web-ui JWT scoped to that tenant. No password. The token is validated
+ * against the hub (single-use); on success the browser session is bound to
+ * the tenant and the ACL restricts the account to that tenant alone.
+ */
+export async function ssoLogin(ctx: Context) {
+  const { token } = ctx.request.body as { token?: string }
+  if (!token || typeof token !== 'string') {
+    ctx.status = 400
+    ctx.body = { error: 'Login token is required' }
+    return
+  }
+
+  let tenantId: string
+  try {
+    const result = await hubClient.validateUILoginToken(token.trim())
+    tenantId = result.tenantID
+  } catch (err: any) {
+    ctx.status = 401
+    ctx.body = { error: 'Login link is invalid or expired' }
+    return
+  }
+
+  if (!tenantId) {
+    ctx.status = 401
+    ctx.body = { error: 'Login link is invalid or expired' }
+    return
+  }
+
+  const user = upsertTenantUser(tenantId)
+  if (!user) {
+    ctx.status = 500
+    ctx.body = { error: 'Failed to establish tenant session' }
+    return
+  }
+
+  let jwt: string
+  try {
+    jwt = await issueUserJwt(user)
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: err?.message || 'Failed to issue session token' }
+    return
+  }
+
+  ctx.body = { token: jwt, tenant: tenantId, profile: tenantId }
 }
 
 /**
