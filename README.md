@@ -228,6 +228,69 @@ is found, it falls back to the Python environment used by the installed
 `hermes` command, then the system Python. This supports both source installs
 and package installs such as `pip install hermes-agent`.
 
+### Hub Client Mode (Variant B)
+
+The Web UI can also run as a **shared, multi-tenant client of
+[hermes-hub](https://github.com/jetcalls/hermes-hub)** instead of managing a
+single local Hermes Agent. In this mode the Web UI:
+
+- Reads all Hermes data (tenants, sessions, memory, chat/runs) from hermes-hub
+  HTTP APIs — no local `~/.hermes` filesystem access, no agent bridge, no
+  per-profile gateway.
+- Surfaces hub tenants as "profiles," ACL-scoped per logged-in user.
+- Replaces the `admin/123456` password login with **SSO**: users open a
+  hub-minted, single-use login link (typically obtained via `/start-ui`).
+
+Requires **Node ≥ 22.5** (Node 24 recommended; uses `node:sqlite`) and a
+running hermes-hub.
+
+#### Required environment
+
+| Variable | Description |
+| --- | --- |
+| `HUB_BASE_URL` | hermes-hub base URL, e.g. `http://127.0.0.1:8080` or `https://hub.example.com`. |
+| `HUB_API_TOKEN` | The hub's control token (`HERMES_HUB_API_TOKEN` on the hub). Required when the hub runs with auth enabled. |
+
+#### Start
+
+```bash
+git clone https://github.com/fulldiveVR/hermes-web-ui && cd hermes-web-ui
+npm install   # builds the dist bundle on prepare
+
+HUB_BASE_URL=https://hub.example.com \
+HUB_API_TOKEN=<hub control token> \
+PORT=8648 \
+HERMES_WEB_UI_HOME=~/.hermes-web-ui \
+  node dist/server/index.js
+# then open http://localhost:8648/sso?token=<hub-minted-token>
+```
+
+#### How users log in
+
+Users obtain a single-use login link from the hub and open it in their browser:
+
+- **Over A2A** — send `/start-ui` (aliases: `start-ui`, `/login`, `/dashboard`,
+  `/ui`) as the message text to `POST /a2a/{tenantID}` on the hub with the
+  tenant's A2A key. The reply contains the link.
+- **From a channel** — the `hub_start_ui` flavor hook handles
+  `command:start-ui` and replies with the link in the same channel.
+- **Operator mint** (for testing) —
+  `POST /v1/tenants/{tenantID}/ui-login-token` with the hub control token,
+  then open the returned `url`.
+
+SSO links are **single-use** and expire after **5 minutes**.
+
+#### What's dropped / reshaped in this mode
+
+Some surfaces depend on a local Hermes CLI / `state.db` and degrade
+gracefully (return empty) or are hidden when running as a hub client: web
+terminal, raw file browser, profile clone/export/import, direct
+channel-token / provider / model editing, skill-usage analytics, agent log
+tailing, plugin discovery. Chat, sessions, memory, and lifecycle are all
+hub-backed.
+
+See [`RESULT.md`](./RESULT.md) for the full change inventory.
+
 ## Web UI Environment Variables
 
 These variables configure Hermes Web UI itself. Provider API keys and Hermes Agent settings are managed separately through Hermes profiles.
@@ -246,6 +309,8 @@ These variables configure Hermes Web UI itself. Provider API keys and Hermes Age
 | `MAX_DOWNLOAD_SIZE` | `200MB` | Maximum file download size. |
 | `MAX_EDIT_SIZE` | `10MB` | Maximum editable file size. |
 | `WORKSPACE_BASE` | `/opt/data/workspace` | Base directory for workspace browsing. |
+| `HUB_BASE_URL` | unset | Hub Client Mode (Variant B): hermes-hub base URL, e.g. `http://127.0.0.1:8080`. When set, Hermes data is sourced from the hub instead of a local Hermes Agent. |
+| `HUB_API_TOKEN` | empty | Hub Client Mode (Variant B): hub control token (`HERMES_HUB_API_TOKEN` on the hub). Required when the hub enforces auth. |
 
 ### CLI Commands
 
