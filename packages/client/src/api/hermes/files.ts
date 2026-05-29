@@ -7,6 +7,8 @@ export interface FileEntry {
   isDir: boolean
   size: number
   modTime: string
+  type?: string
+  mimeType?: string
 }
 
 export interface FileStat {
@@ -19,11 +21,11 @@ export interface FileStat {
   permissions?: string
 }
 
-export async function listFiles(path: string = ''): Promise<{ entries: FileEntry[]; path: string; absolutePath?: string }> {
+export async function listFiles(path: string = ''): Promise<{ entries: FileEntry[]; path: string; absolutePath?: string; readOnly?: boolean }> {
   const params = new URLSearchParams()
   if (path) params.set('path', path)
   const query = params.toString()
-  return request<{ entries: FileEntry[]; path: string }>(`/api/hermes/files/list${query ? `?${query}` : ''}`)
+  return request<{ entries: FileEntry[]; path: string; readOnly?: boolean }>(`/api/hermes/files/list${query ? `?${query}` : ''}`)
 }
 
 export async function statFile(path: string): Promise<FileStat> {
@@ -103,5 +105,22 @@ export function getFileDownloadUrl(relativePath: string, fileName?: string): str
   if (profileName) params.set('profile', profileName)
   const token = getApiKey()
   if (token) params.set('token', token)
-  return `${base}/api/hermes/download?${params.toString()}`
+  return `${base}/api/hermes/files/download?${params.toString()}`
+}
+
+export async function downloadFile(relativePath: string, fileName?: string): Promise<void> {
+  const res = await fetch(getFileDownloadUrl(relativePath, fileName))
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+    throw new Error(body.error || `Download failed: ${res.status}`)
+  }
+  const blob = await res.blob()
+  const blobUrl = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = blobUrl
+  a.download = fileName || relativePath.split('/').pop() || 'download'
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(blobUrl)
 }

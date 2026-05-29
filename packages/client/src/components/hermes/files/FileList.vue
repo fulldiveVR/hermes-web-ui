@@ -2,7 +2,7 @@
 import { NButton, NSpin, NEmpty, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useFilesStore, isImageFile, isMarkdownFile, isTextFile } from '@/stores/hermes/files'
-import { downloadFile } from '@/api/hermes/download'
+import { downloadFile } from '@/api/hermes/files'
 import type { FileEntry } from '@/api/hermes/files'
 
 const { t } = useI18n()
@@ -45,13 +45,13 @@ function getFileIcon(entry: FileEntry): string {
   return iconMap[ext] || '📄'
 }
 
-function handleDoubleClick(entry: FileEntry) {
+function handleOpen(entry: FileEntry) {
   if (entry.isDir) {
     filesStore.navigateTo(entry.path)
-  } else if (isTextFile(entry.name)) {
-    filesStore.openEditor(entry.path)
   } else if (isImageFile(entry.name) || isMarkdownFile(entry.name)) {
     filesStore.openPreview(entry)
+  } else if (isTextFile(entry.name)) {
+    filesStore.openEditor(entry.path)
   }
 }
 
@@ -93,7 +93,7 @@ async function handleDownload(entry: FileEntry) {
           v-for="entry in filesStore.sortedEntries"
           :key="entry.path"
           class="file-list-row"
-          @dblclick="handleDoubleClick(entry)"
+          @click="handleOpen(entry)"
           @contextmenu="handleContextMenu($event, entry)"
         >
           <div class="file-name">

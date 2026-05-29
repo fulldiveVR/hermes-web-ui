@@ -89,6 +89,16 @@ export interface HubSkillFileEntry {
   isDir: boolean
 }
 
+export interface HubTenantFileEntry {
+  name: string
+  path: string
+  isDir: boolean
+  type?: 'file' | 'directory' | 'symlink'
+  size: number
+  modTime: string
+  mimeType?: string
+}
+
 export class HubError extends Error {
   constructor(public status: number, message: string, public body?: string) {
     super(message)
@@ -217,6 +227,35 @@ export const hubClient = {
     return data.content
   },
 
+  async listTenantFiles(tenantId: string, path = ''): Promise<{ entries: HubTenantFileEntry[]; path: string }> {
+    const qs = path ? `?path=${encodeURIComponent(path)}` : ''
+    const data = await hubJson<{ entries?: HubTenantFileEntry[]; path?: string }>(
+      `/v1/tenants/${encodeURIComponent(tenantId)}/files${qs}`,
+    )
+    return { entries: data.entries ?? [], path: data.path ?? path }
+  },
+
+  async getTenantFileContent(tenantId: string, path: string): Promise<{ content: string; path: string; size: number }> {
+    return hubJson(
+      `/v1/tenants/${encodeURIComponent(tenantId)}/files/content?path=${encodeURIComponent(path)}`,
+    )
+  },
+
+  async downloadTenantFile(tenantId: string, path: string): Promise<{ data: Buffer; contentType: string; fileName: string }> {
+    const res = await hubFetch(
+      `/v1/tenants/${encodeURIComponent(tenantId)}/files/download?path=${encodeURIComponent(path)}`,
+    )
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      throw new HubError(res.status, `hub file download failed: ${res.status}`, body)
+    }
+    const buffer = Buffer.from(await res.arrayBuffer())
+    const contentType = res.headers.get('content-type') || 'application/octet-stream'
+    const disposition = res.headers.get('content-disposition') || ''
+    const fileName = filenameFromContentDisposition(disposition) || path.split('/').pop() || 'download'
+    return { data: buffer, contentType, fileName }
+  },
+
   async listAgentCronJobs(tenantId: string): Promise<HubAgentCronJob[]> {
     const data = await hubJson<{ jobs?: HubAgentCronJob[] }>(
       `/v1/tenants/${encodeURIComponent(tenantId)}/agent-cron`,
@@ -321,6 +360,19 @@ export const hubClient = {
     }
     if (buffer.trim()) emitSseChunk(buffer, onEvent)
   },
+}
+
+function filenameFromContentDisposition(value: string): string {
+  const utf8 = value.match(/filename\*=UTF-8''([^;]+)/i)
+  if (utf8?.[1]) {
+    try {
+      return decodeURIComponent(utf8[1])
+    } catch {
+      return utf8[1]
+    }
+  }
+  const basic = value.match(/filename="?([^";]+)"?/i)
+  return basic?.[1] || ''
 }
 
 function emitSseChunk(

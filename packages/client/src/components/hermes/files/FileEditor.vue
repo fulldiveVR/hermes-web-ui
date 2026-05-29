@@ -38,6 +38,7 @@ onMounted(() => {
     automaticLayout: true,
     tabSize: 2,
     wordWrap: 'on',
+    readOnly: !!filesStore.editingFile.readOnly,
   })
 
   editor.onDidChangeModelContent(() => {
@@ -58,6 +59,7 @@ onBeforeUnmount(() => {
 })
 
 async function handleSave() {
+  if (filesStore.editingFile?.readOnly) return
   saving.value = true
   try {
     await filesStore.saveEditor()
@@ -90,7 +92,7 @@ function handleClose() {
     <div class="editor-header">
       <span class="editor-filename">{{ filesStore.editingFile?.path }}</span>
       <NSpace>
-        <NButton size="small" type="primary" :loading="saving" @click="handleSave">
+        <NButton v-if="!filesStore.editingFile?.readOnly" size="small" type="primary" :loading="saving" @click="handleSave">
           {{ t('files.saveFile') }}
         </NButton>
         <NButton size="small" @click="handleClose">

@@ -76,6 +76,7 @@ export const useFilesStore = defineStore('files', () => {
   const currentPath = ref('')
   const entries = ref<FileEntry[]>([])
   const loading = ref(false)
+  const readOnly = ref(false)
   const sortBy = ref<'name' | 'size' | 'modTime'>('name')
   const sortOrder = ref<'asc' | 'desc'>('asc')
 
@@ -84,6 +85,7 @@ export const useFilesStore = defineStore('files', () => {
     content: string
     originalContent: string
     language: string
+    readOnly: boolean
   } | null>(null)
 
   const previewFile = ref<{
@@ -124,6 +126,7 @@ export const useFilesStore = defineStore('files', () => {
     try {
       const result = await filesApi.listFiles(currentPath.value)
       entries.value = result.entries
+      readOnly.value = !!result.readOnly
     } catch (err) {
       console.error('Failed to fetch files:', err)
       throw err
@@ -146,11 +149,13 @@ export const useFilesStore = defineStore('files', () => {
       content: result.content,
       originalContent: result.content,
       language: getLanguageFromPath(filePath),
+      readOnly: readOnly.value,
     }
   }
 
   async function saveEditor() {
     if (!editingFile.value) return
+    if (editingFile.value.readOnly) return
     await filesApi.writeFile(editingFile.value.path, editingFile.value.content)
     editingFile.value.originalContent = editingFile.value.content
   }
@@ -230,7 +235,7 @@ export const useFilesStore = defineStore('files', () => {
 
   return {
     currentPath, entries, loading, sortBy, sortOrder,
-    editingFile, previewFile,
+    readOnly, editingFile, previewFile,
     pathSegments, sortedEntries, hasUnsavedChanges,
     fetchEntries, navigateTo, navigateUp,
     openEditor, saveEditor, closeEditor,

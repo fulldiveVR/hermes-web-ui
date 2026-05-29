@@ -44,6 +44,17 @@ function handleRootClick() {
   filesStore.navigateTo('')
 }
 
+function nodeProps(option: TreeOption) {
+  return {
+    onClick: () => {
+      const key = String(option.key ?? '')
+      if (!key) return
+      selectedKeys.value = [key]
+      void filesStore.navigateTo(key)
+    },
+  }
+}
+
 onMounted(async () => {
   treeData.value = await loadChildren('')
 })
@@ -62,6 +73,7 @@ onMounted(async () => {
       :data="treeData"
       :selected-keys="selectedKeys"
       :on-load="handleLoad"
+      :node-props="nodeProps"
       expand-on-click
       block-line
       @update:selected-keys="handleSelect"

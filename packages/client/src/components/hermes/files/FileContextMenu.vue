@@ -3,7 +3,7 @@ import { ref, nextTick } from 'vue'
 import { NDropdown, useMessage, useDialog } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useFilesStore, isTextFile, isImageFile, isMarkdownFile } from '@/stores/hermes/files'
-import { downloadFile } from '@/api/hermes/download'
+import { downloadFile } from '@/api/hermes/files'
 import type { FileEntry } from '@/api/hermes/files'
 import { copyToClipboard } from '@/utils/clipboard'
 import { getClipboardPathForEntry } from '@/utils/file-path'
@@ -48,11 +48,13 @@ function getOptions() {
     }
     options.push({ label: t('files.download'), key: 'download' })
   }
-  options.push({ type: 'divider', key: 'd1' })
   options.push({ label: t('files.copyPath'), key: 'copyPath' })
-  options.push({ label: t('files.rename'), key: 'rename' })
-  options.push({ type: 'divider', key: 'd2' })
-  options.push({ label: t('files.delete'), key: 'delete' })
+  if (!filesStore.readOnly) {
+    options.push({ type: 'divider', key: 'd1' })
+    options.push({ label: t('files.rename'), key: 'rename' })
+    options.push({ type: 'divider', key: 'd2' })
+    options.push({ label: t('files.delete'), key: 'delete' })
+  }
   return options
 }
 

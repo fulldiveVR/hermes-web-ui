@@ -25,13 +25,13 @@ async function handleRefresh() {
 <template>
   <div class="file-toolbar">
     <NSpace :size="8" :wrap="true" class="toolbar-space">
-      <NButton size="small" @click="emit('showNewFile')" class="toolbar-btn">
+      <NButton v-if="!filesStore.readOnly" size="small" @click="emit('showNewFile')" class="toolbar-btn">
         {{ t('files.newFile') }}
       </NButton>
-      <NButton size="small" @click="emit('showNewFolder')" class="toolbar-btn">
+      <NButton v-if="!filesStore.readOnly" size="small" @click="emit('showNewFolder')" class="toolbar-btn">
         {{ t('files.newFolder') }}
       </NButton>
-      <NButton size="small" @click="emit('showUpload')" class="toolbar-btn">
+      <NButton v-if="!filesStore.readOnly" size="small" @click="emit('showUpload')" class="toolbar-btn">
         {{ t('files.upload') }}
       </NButton>
       <NButton size="small" @click="handleRefresh" class="toolbar-btn">

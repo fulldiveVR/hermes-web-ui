@@ -2,7 +2,6 @@
 import { ref, onMounted } from 'vue'
 import { useFilesStore } from '@/stores/hermes/files'
 import { useProfilesStore } from '@/stores/hermes/profiles'
-import FileTree from '@/components/hermes/files/FileTree.vue'
 import FileBreadcrumb from '@/components/hermes/files/FileBreadcrumb.vue'
 import FileToolbar from '@/components/hermes/files/FileToolbar.vue'
 import FileList from '@/components/hermes/files/FileList.vue'
@@ -58,16 +57,15 @@ onMounted(() => {
 
 <template>
   <div class="files-view">
-    <div class="files-tree-panel">
-      <FileTree />
-    </div>
     <div class="files-main-panel">
-      <FileToolbar
-        @show-new-file="handleShowNewFile"
-        @show-new-folder="handleShowNewFolder"
-        @show-upload="showUpload = true"
-      />
-      <FileBreadcrumb />
+      <div class="files-header">
+        <FileToolbar
+          @show-new-file="handleShowNewFile"
+          @show-new-folder="handleShowNewFolder"
+          @show-upload="showUpload = true"
+        />
+        <FileBreadcrumb />
+      </div>
       <div class="files-content">
         <FileEditor v-if="filesStore.editingFile" />
         <FilePreview v-else-if="filesStore.previewFile" />
@@ -84,18 +82,10 @@ onMounted(() => {
 @use '@/styles/variables' as *;
 
 .files-view {
-  display: flex;
   height: 100%;
   overflow: hidden;
-}
-
-.files-tree-panel {
-  width: 240px;
-  min-width: 180px;
-  max-width: 400px;
-  border-right: 1px solid $border-color;
-  overflow-y: auto;
-  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .files-main-panel {
@@ -106,23 +96,15 @@ onMounted(() => {
   overflow: hidden;
 }
 
+.files-header {
+  flex-shrink: 0;
+  border-bottom: 1px solid $border-color;
+  padding-bottom: 10px;
+}
+
 .files-content {
   flex: 1;
   overflow-y: auto;
   min-height: 0;
-}
-
-@media (max-width: $breakpoint-mobile) {
-  .files-view {
-    flex-direction: column;
-  }
-
-  .files-tree-panel {
-    width: 100%;
-    max-width: none;
-    height: 200px;
-    border-right: none;
-    border-bottom: 1px solid $border-color;
-  }
 }
 </style>
