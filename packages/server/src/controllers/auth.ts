@@ -192,8 +192,8 @@ export async function requestEmailLogin(ctx: Context) {
   try {
     ctx.body = await hubClient.requestUIEmailLoginCode(normalized, typeof sessionId === 'string' ? sessionId : undefined)
   } catch (err: any) {
-    ctx.status = err?.status === 400 ? 400 : err?.status === 503 ? 503 : 502
-    ctx.body = { error: err?.status === 503 ? 'Email login is not configured' : 'Failed to send verification code' }
+    ctx.status = err?.status === 400 ? 400 : err?.status === 503 ? 503 : err?.status === 403 ? 403 : 502
+    ctx.body = { error: err?.status === 503 ? 'Email login is not configured' : err?.status === 403 ? 'This email domain is not allowed to sign in' : 'Failed to send verification code' }
   }
 }
 
